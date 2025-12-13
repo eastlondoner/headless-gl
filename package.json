@@ -1,6 +1,6 @@
 {
   "name": "gl-bun",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Creates a WebGL context without a window - with Bun support via N-API",
   "main": "index.js",
   "browser": "src/javascript/browser-index.js",
