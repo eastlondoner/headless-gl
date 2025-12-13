@@ -1,11 +1,11 @@
-function isProbablyBun() {
+function isProbablyBun () {
   // Bun sets process.versions.bun.
   return typeof process !== 'undefined' &&
     process.versions != null &&
     typeof process.versions.bun === 'string'
 }
 
-function loadNativeWebGL() {
+function loadNativeWebGL () {
   const bindings = require('bindings')
 
   // Prefer N-API build on Bun to avoid NAN/V8 binary incompatibility.

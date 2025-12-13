@@ -6,6 +6,8 @@
 
 #include <cstdint>
 #include <cstring>
+#include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -106,6 +108,29 @@ std::string get_string_arg(napi_env env, napi_value arg) {
   std::string str(len, '\0');
   napi_get_value_string_utf8(env, arg, &str[0], len + 1, &len);
   return str;
+}
+
+// Helper to get element size in bytes for typed array types
+static size_t get_typedarray_element_size(napi_typedarray_type type) {
+  switch (type) {
+    case napi_int8_array:
+    case napi_uint8_array:
+    case napi_uint8_clamped_array:
+      return 1;
+    case napi_int16_array:
+    case napi_uint16_array:
+      return 2;
+    case napi_int32_array:
+    case napi_uint32_array:
+    case napi_float32_array:
+      return 4;
+    case napi_float64_array:
+    case napi_bigint64_array:
+    case napi_biguint64_array:
+      return 8;
+    default:
+      return 1;
+  }
 }
 
 // Constructor
@@ -230,17 +255,29 @@ napi_value readPixels(napi_env env, napi_callback_info info) {
   GLenum type = get_uint32_arg(env, argv[5]);
 
   // argv[6] is the destination buffer (TypedArray)
-  void* data = nullptr;
-  size_t byte_length = 0;
   napi_typedarray_type arr_type;
   size_t arr_length;
+  void* data = nullptr;
   napi_value arr_buffer;
   size_t byte_offset;
 
   napi_get_typedarray_info(env, argv[6], &arr_type, &arr_length, &data, &arr_buffer, &byte_offset);
 
-  if (data) {
-    glReadPixels(x, y, width, height, format, type, data);
+  if (arr_length > 0) {
+    // Calculate byte length based on typed array type
+    size_t byte_length = arr_length * get_typedarray_element_size(arr_type);
+
+    // Work around Bun N-API issue: get the raw ArrayBuffer pointer and calculate
+    // the correct position, as the TypedArray data pointer may not be reliable
+    void* buffer_data = nullptr;
+    size_t buffer_length = 0;
+    napi_get_arraybuffer_info(env, arr_buffer, &buffer_data, &buffer_length);
+
+    if (buffer_data) {
+      // Calculate the actual destination pointer
+      uint8_t* dest = static_cast<uint8_t*>(buffer_data) + byte_offset;
+      glReadPixels(x, y, width, height, format, type, dest);
+    }
   }
 
   return get_undefined(env);
@@ -471,7 +508,6 @@ napi_value bufferData(napi_env env, napi_callback_info info) {
   } else {
     // Assume it's a typed array
     void* data = nullptr;
-    size_t byte_length = 0;
     napi_typedarray_type arr_type;
     size_t arr_length;
     napi_value arr_buffer;
@@ -479,7 +515,8 @@ napi_value bufferData(napi_env env, napi_callback_info info) {
 
     napi_status status = napi_get_typedarray_info(env, argv[1], &arr_type, &arr_length, &data, &arr_buffer, &byte_offset);
     if (status == napi_ok && data) {
-      napi_get_arraybuffer_info(env, arr_buffer, nullptr, &byte_length);
+      // Calculate actual byte length from typed array length and element size
+      size_t byte_length = arr_length * get_typedarray_element_size(arr_type);
       glBufferData(target, byte_length, data, usage);
     }
   }
@@ -498,7 +535,6 @@ napi_value bufferSubData(napi_env env, napi_callback_info info) {
   GLintptr offset = (GLintptr)get_int32_arg(env, argv[1]);
 
   void* data = nullptr;
-  size_t byte_length = 0;
   napi_typedarray_type arr_type;
   size_t arr_length;
   napi_value arr_buffer;
@@ -506,7 +542,8 @@ napi_value bufferSubData(napi_env env, napi_callback_info info) {
 
   napi_status status = napi_get_typedarray_info(env, argv[2], &arr_type, &arr_length, &data, &arr_buffer, &byte_offset);
   if (status == napi_ok && data) {
-    napi_get_arraybuffer_info(env, arr_buffer, nullptr, &byte_length);
+    // Calculate actual byte length from typed array length and element size
+    size_t byte_length = arr_length * get_typedarray_element_size(arr_type);
     glBufferSubData(target, offset, byte_length, data);
   }
 
@@ -1641,6 +1678,14 @@ napi_value texSubImage2D(napi_env env, napi_callback_info info) {
 
 // ============== Query methods ==============
 
+// Helper to return value or null based on bytesWritten
+napi_value return_param_or_null(napi_env env, napi_value value, GLsizei bytesWritten) {
+  if (bytesWritten > 0) {
+    return value;
+  }
+  return get_null(env);
+}
+
 napi_value getParameter(napi_env env, napi_callback_info info) {
   GL_NAPI_BOILERPLATE(ctx);
 
@@ -1649,20 +1694,155 @@ napi_value getParameter(napi_env env, napi_callback_info info) {
   napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
 
   GLenum pname = get_uint32_arg(env, argv[0]);
+  GLsizei bytesWritten = 0;
 
-  // Handle string parameters
   switch (pname) {
-    case GL_VENDOR:
-    case GL_RENDERER:
-    case GL_VERSION:
-    case GL_SHADING_LANGUAGE_VERSION:
-      return make_string(env, (const char*)glGetString(pname));
-  }
+    // WebGL-specific parameters
+    case 0x9240 /* UNPACK_FLIP_Y_WEBGL */:
+      return make_bool(env, ctx->unpack_flip_y);
 
-  // Handle integer parameters
-  GLint value;
-  glGetIntegerv(pname, &value);
-  return make_int32(env, value);
+    case 0x9241 /* UNPACK_PREMULTIPLY_ALPHA_WEBGL */:
+      return make_bool(env, ctx->unpack_premultiply_alpha);
+
+    case 0x9243 /* UNPACK_COLORSPACE_CONVERSION_WEBGL */:
+      return make_int32(env, ctx->unpack_colorspace_conversion);
+
+    // Boolean parameters
+    case GL_BLEND:
+    case GL_CULL_FACE:
+    case GL_DEPTH_TEST:
+    case GL_DEPTH_WRITEMASK:
+    case GL_DITHER:
+    case GL_POLYGON_OFFSET_FILL:
+    case GL_SAMPLE_COVERAGE_INVERT:
+    case GL_SCISSOR_TEST:
+    case GL_STENCIL_TEST: {
+      GLboolean params = GL_FALSE;
+      glGetBooleanvRobustANGLE(pname, sizeof(GLboolean), &bytesWritten, &params);
+      return return_param_or_null(env, make_bool(env, params != 0), bytesWritten);
+    }
+
+    // Float parameters
+    case GL_DEPTH_CLEAR_VALUE:
+    case GL_LINE_WIDTH:
+    case GL_POLYGON_OFFSET_FACTOR:
+    case GL_POLYGON_OFFSET_UNITS:
+    case GL_SAMPLE_COVERAGE_VALUE:
+    case GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT: {
+      GLfloat params = 0;
+      glGetFloatvRobustANGLE(pname, sizeof(GLfloat), &bytesWritten, &params);
+      return return_param_or_null(env, make_double(env, params), bytesWritten);
+    }
+
+    // String parameters
+    case GL_RENDERER:
+    case GL_SHADING_LANGUAGE_VERSION:
+    case GL_VENDOR:
+    case GL_VERSION:
+    case GL_EXTENSIONS: {
+      const char* params = reinterpret_cast<const char*>(glGetString(pname));
+      if (params) {
+        return make_string(env, params);
+      }
+      return get_null(env);
+    }
+
+    // 2-element integer array parameters
+    case GL_MAX_VIEWPORT_DIMS: {
+      GLint params[2] = {};
+      glGetIntegervRobustANGLE(pname, sizeof(GLint) * 2, &bytesWritten, params);
+      if (bytesWritten > 0) {
+        napi_value arr;
+        napi_create_array_with_length(env, 2, &arr);
+        napi_value v0, v1;
+        napi_create_int32(env, params[0], &v0);
+        napi_create_int32(env, params[1], &v1);
+        napi_set_element(env, arr, 0, v0);
+        napi_set_element(env, arr, 1, v1);
+        return arr;
+      }
+      return get_null(env);
+    }
+
+    // 4-element integer array parameters
+    case GL_SCISSOR_BOX:
+    case GL_VIEWPORT: {
+      GLint params[4] = {};
+      glGetIntegervRobustANGLE(pname, sizeof(GLint) * 4, &bytesWritten, params);
+      if (bytesWritten > 0) {
+        napi_value arr;
+        napi_create_array_with_length(env, 4, &arr);
+        for (int i = 0; i < 4; i++) {
+          napi_value v;
+          napi_create_int32(env, params[i], &v);
+          napi_set_element(env, arr, i, v);
+        }
+        return arr;
+      }
+      return get_null(env);
+    }
+
+    // 2-element float array parameters
+    case GL_ALIASED_LINE_WIDTH_RANGE:
+    case GL_ALIASED_POINT_SIZE_RANGE:
+    case GL_DEPTH_RANGE: {
+      GLfloat params[2] = {};
+      glGetFloatvRobustANGLE(pname, sizeof(GLfloat) * 2, &bytesWritten, params);
+      if (bytesWritten > 0) {
+        napi_value arr;
+        napi_create_array_with_length(env, 2, &arr);
+        napi_value v0, v1;
+        napi_create_double(env, params[0], &v0);
+        napi_create_double(env, params[1], &v1);
+        napi_set_element(env, arr, 0, v0);
+        napi_set_element(env, arr, 1, v1);
+        return arr;
+      }
+      return get_null(env);
+    }
+
+    // 4-element float array parameters
+    case GL_BLEND_COLOR:
+    case GL_COLOR_CLEAR_VALUE: {
+      GLfloat params[4] = {};
+      glGetFloatvRobustANGLE(pname, sizeof(GLfloat) * 4, &bytesWritten, params);
+      if (bytesWritten > 0) {
+        napi_value arr;
+        napi_create_array_with_length(env, 4, &arr);
+        for (int i = 0; i < 4; i++) {
+          napi_value v;
+          napi_create_double(env, params[i], &v);
+          napi_set_element(env, arr, i, v);
+        }
+        return arr;
+      }
+      return get_null(env);
+    }
+
+    // 4-element boolean array parameters
+    case GL_COLOR_WRITEMASK: {
+      GLboolean params[4] = {};
+      glGetBooleanvRobustANGLE(pname, sizeof(GLboolean) * 4, &bytesWritten, params);
+      if (bytesWritten > 0) {
+        napi_value arr;
+        napi_create_array_with_length(env, 4, &arr);
+        for (int i = 0; i < 4; i++) {
+          napi_value v;
+          napi_get_boolean(env, params[i] == GL_TRUE, &v);
+          napi_set_element(env, arr, i, v);
+        }
+        return arr;
+      }
+      return get_null(env);
+    }
+
+    // Default: integer parameters
+    default: {
+      GLint params = 0;
+      glGetIntegervRobustANGLE(pname, sizeof(GLint), &bytesWritten, &params);
+      return return_param_or_null(env, make_int32(env, params), bytesWritten);
+    }
+  }
 }
 
 napi_value getError(napi_env env, napi_callback_info info) {
@@ -1682,9 +1862,51 @@ napi_value getSupportedExtensions(napi_env env, napi_callback_info info) {
   return make_string(env, extensions.c_str());
 }
 
+// Helper to parse space-separated extension string into a set
+static std::set<std::string> GetStringSetFromCString(const char *cstr) {
+  std::set<std::string> result;
+  if (!cstr) return result;
+  std::istringstream iss(cstr);
+  std::string word;
+  while (iss >> word) {
+    result.insert(word);
+  }
+  return result;
+}
+
 napi_value getExtension(napi_env env, napi_callback_info info) {
-  // TODO: Implement extension objects
-  return get_null(env);
+  GL_NAPI_BOILERPLATE(ctx);
+
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+  std::string name = get_string_arg(env, argv[0]);
+
+  // Look up the corresponding ANGLE extensions for this WebGL extension
+  auto extsIter = ctx->webGLToANGLEExtensions.find(name);
+  if (extsIter == ctx->webGLToANGLEExtensions.end()) {
+    // Extension not recognized - return null
+    return get_null(env);
+  }
+
+  // Request each required ANGLE extension
+  for (const std::string &ext : extsIter->second) {
+    if (ctx->requestableExtensions.count(ext) == 0) {
+      // Extension not requestable - skip
+      continue;
+    }
+    if (ctx->enabledExtensions.count(ext) == 0) {
+      // Extension not yet enabled - request it
+      glRequestExtensionANGLE(ext.c_str());
+      // Refresh the enabled extensions list
+      const char *extensionsString = (const char *)glGetString(GL_EXTENSIONS);
+      ctx->enabledExtensions = GetStringSetFromCString(extensionsString);
+    }
+  }
+
+  // Return undefined (the JavaScript wrapper creates the actual extension object)
+  return get_undefined(env);
 }
 
 napi_value getShaderPrecisionFormat(napi_env env, napi_callback_info info) {
@@ -1714,6 +1936,91 @@ napi_value getShaderPrecisionFormat(napi_env env, napi_callback_info info) {
   napi_set_named_property(env, obj, "precision", prec);
 
   return obj;
+}
+
+// ============== Vertex Attribute Query Methods ==============
+
+napi_value getVertexAttrib(napi_env env, napi_callback_info info) {
+  GL_NAPI_BOILERPLATE(ctx);
+
+  size_t argc = 2;
+  napi_value argv[2];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+  GLuint index = get_uint32_arg(env, argv[0]);
+  GLenum pname = get_uint32_arg(env, argv[1]);
+
+  GLint value;
+
+  switch (pname) {
+    case GL_VERTEX_ATTRIB_ARRAY_ENABLED:
+    case GL_VERTEX_ATTRIB_ARRAY_NORMALIZED: {
+      glGetVertexAttribiv(index, pname, &value);
+      return make_bool(env, value != 0);
+    }
+
+    case GL_VERTEX_ATTRIB_ARRAY_DIVISOR_ANGLE:
+    case GL_VERTEX_ATTRIB_ARRAY_SIZE:
+    case GL_VERTEX_ATTRIB_ARRAY_STRIDE:
+    case GL_VERTEX_ATTRIB_ARRAY_TYPE:
+    case GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING: {
+      glGetVertexAttribiv(index, pname, &value);
+      return make_int32(env, value);
+    }
+
+    case GL_CURRENT_VERTEX_ATTRIB: {
+      float vertex_attribs[4];
+      glGetVertexAttribfv(index, pname, vertex_attribs);
+
+      napi_value arr;
+      napi_create_array_with_length(env, 4, &arr);
+      for (int i = 0; i < 4; i++) {
+        napi_value v;
+        napi_create_double(env, vertex_attribs[i], &v);
+        napi_set_element(env, arr, i, v);
+      }
+      return arr;
+    }
+
+    default:
+      break;
+  }
+
+  ctx->setError(GL_INVALID_ENUM);
+  return get_null(env);
+}
+
+napi_value getVertexAttribOffset(napi_env env, napi_callback_info info) {
+  GL_NAPI_BOILERPLATE(ctx);
+
+  size_t argc = 2;
+  napi_value argv[2];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+  GLuint index = get_uint32_arg(env, argv[0]);
+  GLenum pname = get_uint32_arg(env, argv[1]);
+
+  void* ret = nullptr;
+  glGetVertexAttribPointerv(index, pname, &ret);
+
+  GLuint offset = static_cast<GLuint>(reinterpret_cast<size_t>(ret));
+  return make_uint32(env, offset);
+}
+
+napi_value getBufferParameter(napi_env env, napi_callback_info info) {
+  GL_NAPI_BOILERPLATE(ctx);
+
+  size_t argc = 2;
+  napi_value argv[2];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+  GLenum target = get_uint32_arg(env, argv[0]);
+  GLenum pname = get_uint32_arg(env, argv[1]);
+
+  GLint params;
+  glGetBufferParameteriv(target, pname, &params);
+
+  return make_int32(env, params);
 }
 
 napi_value flush(napi_env env, napi_callback_info info) {
@@ -2043,6 +2350,9 @@ napi_value init(napi_env env, napi_value exports) {
       {"getSupportedExtensions", nullptr, getSupportedExtensions, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"getExtension", nullptr, getExtension, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"getShaderPrecisionFormat", nullptr, getShaderPrecisionFormat, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"getVertexAttrib", nullptr, getVertexAttrib, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"getVertexAttribOffset", nullptr, getVertexAttribOffset, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"getBufferParameter", nullptr, getBufferParameter, nullptr, nullptr, nullptr, napi_default, nullptr},
 
       // Extensions
       {"extWEBGL_draw_buffers", nullptr, extWEBGL_draw_buffers, nullptr, nullptr, nullptr, napi_default, nullptr},
@@ -2076,6 +2386,8 @@ napi_value init(napi_env env, napi_value exports) {
   // Buffer targets
   set_const(env, proto, "ARRAY_BUFFER", GL_ARRAY_BUFFER);
   set_const(env, proto, "ELEMENT_ARRAY_BUFFER", GL_ELEMENT_ARRAY_BUFFER);
+  set_const(env, proto, "BUFFER_SIZE", GL_BUFFER_SIZE);
+  set_const(env, proto, "BUFFER_USAGE", GL_BUFFER_USAGE);
 
   // Framebuffer/Renderbuffer
   set_const(env, proto, "FRAMEBUFFER", GL_FRAMEBUFFER);
@@ -2125,12 +2437,58 @@ napi_value init(napi_env env, napi_value exports) {
   set_const(env, proto, "BLEND", GL_BLEND);
   set_const(env, proto, "SCISSOR_TEST", GL_SCISSOR_TEST);
   set_const(env, proto, "STENCIL_TEST", GL_STENCIL_TEST);
+  set_const(env, proto, "DITHER", GL_DITHER);
+  set_const(env, proto, "POLYGON_OFFSET_FILL", GL_POLYGON_OFFSET_FILL);
+  set_const(env, proto, "SAMPLE_ALPHA_TO_COVERAGE", GL_SAMPLE_ALPHA_TO_COVERAGE);
+  set_const(env, proto, "SAMPLE_COVERAGE", GL_SAMPLE_COVERAGE);
+
+  // Depth/stencil function constants
+  set_const(env, proto, "NEVER", GL_NEVER);
+  set_const(env, proto, "LESS", GL_LESS);
+  set_const(env, proto, "EQUAL", GL_EQUAL);
+  set_const(env, proto, "LEQUAL", GL_LEQUAL);
+  set_const(env, proto, "GREATER", GL_GREATER);
+  set_const(env, proto, "NOTEQUAL", GL_NOTEQUAL);
+  set_const(env, proto, "GEQUAL", GL_GEQUAL);
+  set_const(env, proto, "ALWAYS", GL_ALWAYS);
+
+  // Stencil operations
+  set_const(env, proto, "KEEP", GL_KEEP);
+  set_const(env, proto, "REPLACE", GL_REPLACE);
+  set_const(env, proto, "INCR", GL_INCR);
+  set_const(env, proto, "DECR", GL_DECR);
+  set_const(env, proto, "INVERT", GL_INVERT);
+  set_const(env, proto, "INCR_WRAP", GL_INCR_WRAP);
+  set_const(env, proto, "DECR_WRAP", GL_DECR_WRAP);
+
+  // Depth state
+  set_const(env, proto, "DEPTH_FUNC", GL_DEPTH_FUNC);
+  set_const(env, proto, "DEPTH_RANGE", GL_DEPTH_RANGE);
+  set_const(env, proto, "DEPTH_WRITEMASK", GL_DEPTH_WRITEMASK);
+  set_const(env, proto, "DEPTH_CLEAR_VALUE", GL_DEPTH_CLEAR_VALUE);
+
+  // Buffer/framebuffer bit depths
+  set_const(env, proto, "DEPTH_BITS", GL_DEPTH_BITS);
+  set_const(env, proto, "STENCIL_BITS", GL_STENCIL_BITS);
+  set_const(env, proto, "RED_BITS", GL_RED_BITS);
+  set_const(env, proto, "GREEN_BITS", GL_GREEN_BITS);
+  set_const(env, proto, "BLUE_BITS", GL_BLUE_BITS);
+  set_const(env, proto, "ALPHA_BITS", GL_ALPHA_BITS);
+  set_const(env, proto, "SUBPIXEL_BITS", GL_SUBPIXEL_BITS);
 
   // getParameter pnames
   set_const(env, proto, "MAX_COMBINED_TEXTURE_IMAGE_UNITS", GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS);
   set_const(env, proto, "MAX_TEXTURE_SIZE", GL_MAX_TEXTURE_SIZE);
   set_const(env, proto, "MAX_CUBE_MAP_TEXTURE_SIZE", GL_MAX_CUBE_MAP_TEXTURE_SIZE);
   set_const(env, proto, "MAX_VERTEX_ATTRIBS", GL_MAX_VERTEX_ATTRIBS);
+  set_const(env, proto, "VERTEX_ATTRIB_ARRAY_ENABLED", GL_VERTEX_ATTRIB_ARRAY_ENABLED);
+  set_const(env, proto, "VERTEX_ATTRIB_ARRAY_SIZE", GL_VERTEX_ATTRIB_ARRAY_SIZE);
+  set_const(env, proto, "VERTEX_ATTRIB_ARRAY_STRIDE", GL_VERTEX_ATTRIB_ARRAY_STRIDE);
+  set_const(env, proto, "VERTEX_ATTRIB_ARRAY_TYPE", GL_VERTEX_ATTRIB_ARRAY_TYPE);
+  set_const(env, proto, "VERTEX_ATTRIB_ARRAY_NORMALIZED", GL_VERTEX_ATTRIB_ARRAY_NORMALIZED);
+  set_const(env, proto, "VERTEX_ATTRIB_ARRAY_POINTER", GL_VERTEX_ATTRIB_ARRAY_POINTER);
+  set_const(env, proto, "VERTEX_ATTRIB_ARRAY_BUFFER_BINDING", GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING);
+  set_const(env, proto, "CURRENT_VERTEX_ATTRIB", GL_CURRENT_VERTEX_ATTRIB);
   set_const(env, proto, "MAX_TEXTURE_IMAGE_UNITS", GL_MAX_TEXTURE_IMAGE_UNITS);
   set_const(env, proto, "MAX_VERTEX_TEXTURE_IMAGE_UNITS", GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS);
   set_const(env, proto, "MAX_RENDERBUFFER_SIZE", GL_MAX_RENDERBUFFER_SIZE);
