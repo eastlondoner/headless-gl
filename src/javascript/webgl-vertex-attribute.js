@@ -26,6 +26,11 @@ class WebGLVertexArrayGlobalAttribute {
     this._idx = idx
     this._data = new Float32Array([0, 0, 0, 1])
   }
+
+  _clear () {
+    // Reset to default state
+    this._data = new Float32Array([0, 0, 0, 1])
+  }
 }
 
 class WebGLVertexArrayObjectState {
@@ -65,11 +70,14 @@ class WebGLVertexArrayObjectState {
 
     for (let i = 0; i < this._attribs.length; ++i) {
       const attrib = this._attribs[i]
+      if (!attrib) continue
       if (attrib._pointerBuffer) {
         attrib._pointerBuffer._refCount -= 1
         attrib._pointerBuffer._checkDelete()
       }
-      attrib._clear()
+      if (typeof attrib._clear === 'function') {
+        attrib._clear()
+      }
     }
   }
 
@@ -79,10 +87,13 @@ class WebGLVertexArrayObjectState {
     }
     for (let i = 0; i < this._attribs.length; ++i) {
       const attrib = this._attribs[i]
+      if (!attrib) continue
       if (attrib._pointerBuffer === buffer) {
         attrib._pointerBuffer._refCount -= 1
         attrib._pointerBuffer._checkDelete()
-        attrib._clear()
+        if (typeof attrib._clear === 'function') {
+          attrib._clear()
+        }
       }
     }
   }
