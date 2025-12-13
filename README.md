@@ -1,17 +1,22 @@
-# gl
+# gl-bun
 
-[![ci](https://github.com/stackgl/headless-gl/actions/workflows/ci.yml/badge.svg)](https://github.com/stackgl/headless-gl/actions/workflows/ci.yml)
+> **Experimental** - This is a fork of [headless-gl](https://github.com/stackgl/headless-gl) with N-API bindings for [Bun](https://bun.sh) compatibility.
+
 [![js-standard-style](https://img.shields.io/badge/code%20style-standard-brightgreen.svg)](http://standardjs.com/)
 
-`gl` lets you create a WebGL context in [Node.js](https://nodejs.org/en/) without making a window or loading a full browser environment.
+`gl-bun` lets you create a WebGL context in [Bun](https://bun.sh) or [Node.js](https://nodejs.org/en/) without making a window or loading a full browser environment.
 
 It aspires to fully conform to the [WebGL 1.0.3 specification](https://www.khronos.org/registry/webgl/specs/1.0.3/).
+
+## Why gl-bun?
+
+The original `headless-gl` package uses NAN (Native Abstractions for Node.js) which relies on V8-specific APIs. Bun uses JavaScriptCore instead of V8, so NAN bindings don't work. This fork adds N-API bindings which work with both Bun and Node.js.
 
 ## Example
 
 ```javascript
 // Create context
-const createGL = require('gl')
+const createGL = require('gl-bun')
 
 const width = 64
 const height = 64
@@ -35,28 +40,33 @@ for(let i = 0; i < pixels.length; i += 4) {
 ```
 
 ## Install
-Installing `headless-gl` on a supported platform is a snap using one of the prebuilt binaries. Using [npm](https://www.npmjs.com/), run the command
 
+Using [npm](https://www.npmjs.com/) or [bun](https://bun.sh):
+
+```bash
+# With npm
+npm install gl-bun
+
+# With bun
+bun add gl-bun
 ```
-npm install gl
-```
 
-And you are good to go!
+**Note:** This package currently requires building from source. Make sure you have the [system dependencies](#system-dependencies) installed.
 
-Prebuilt binaries are generally available for LTS node versions (e.g. 20, 22, 24) until they reach EOL. If your system is not supported, then please see the [development](#system-dependencies) section on how to configure your build environment. Patches to improve support are always welcome!
+## Supported platforms and runtimes
 
-## Supported platforms and Node.js versions
+gl-bun runs on Linux, macOS, and Windows.
 
-gl runs on Linux, macOS, and Windows.
-
-Node.js versions 20 and up are tested and supported. Earlier versions may still function, however.
+Tested with:
+- **Bun** 1.0+ (primary target)
+- **Node.js** 20+ (also supported via N-API)
 
 ## API
 
-`headless-gl` exports exactly one function which you can use to create a WebGL context with the given context attributes:
+`gl-bun` exports exactly one function which you can use to create a WebGL context with the given context attributes:
 
 ```javascript
-const createGL = require('gl')
+const createGL = require('gl-bun')
 
 const gl = createGL(width, height)
 ```
@@ -69,13 +79,13 @@ const gl = createGL(width, height)
 
 ### Extensions
 
-In addition to all the usual WebGL methods, `headless-gl` exposes some custom extensions to make it easier to manage WebGL context resources in a server side environment:
+In addition to all the usual WebGL methods, `gl-bun` exposes some custom extensions to make it easier to manage WebGL context resources in a server side environment:
 
 #### `STACKGL_resize_drawingbuffer`
 
 This extension provides a mechanism to resize the drawing buffer of a WebGL context once it is created.
 
-In a pure DOM implementation, this method would implemented by resizing the WebGLContext's canvas element by modifying its `width/height` properties. This canvas manipulation is not possible in headless-gl, since a headless context doesn't have a DOM or a canvas element associated to it.
+In a pure DOM implementation, this method would implemented by resizing the WebGLContext's canvas element by modifying its `width/height` properties. This canvas manipulation is not possible in gl-bun, since a headless context doesn't have a DOM or a canvas element associated to it.
 
 #### Example
 
@@ -136,7 +146,7 @@ To create a WebGL 2 context, set the `createWebGL2Context` property to `true` in
 
 ## System dependencies
 
-In most cases installing `headless-gl` from npm should just work. However, if you run into problems you might need to adjust your system configuration and make sure all your dependencies are up to date. For general information on building native modules, see the [`node-gyp`](https://github.com/nodejs/node-gyp) documentation.
+Since `gl-bun` currently requires building from source, you'll need to install the system dependencies for your platform. For general information on building native modules, see the [`node-gyp`](https://github.com/nodejs/node-gyp) documentation.
 
 #### Mac OS X
 
@@ -164,12 +174,12 @@ $ sudo apt-get install -y build-essential libxi-dev libglu1-mesa-dev libglew-dev
 
 ## FAQ
 
-### How can I use headless-gl with a continuous integration service?
+### How can I use gl-bun with a continuous integration service?
 
-`headless-gl` should work out of the box on most CI systems. Some notes on specific CI systems:
+`gl-bun` should work out of the box on most CI systems. Some notes on specific CI systems:
 
 * GitHub Actions: refer to the workflow files, specifially the `ci` workflow for an example.
-* [CircleCI](https://circleci.com/): `headless-gl` should just work in the default node environment.
+* [CircleCI](https://circleci.com/): `gl-bun` should just work in the default node environment.
 * [AppVeyor](http://www.appveyor.com/): Again it should just work
 * [TravisCI](https://travis-ci.org/): Works out of the box on the OS X image. For Linux VMs, you need to install mesa and xvfb. To do this, create a file in the root of your repo called `.travis.yml` and paste the following into it:
 
@@ -192,7 +202,7 @@ before_script:
   - export DISPLAY=:99.0; sh -e /etc/init.d/xvfb start
 ```
 
-### How can `headless-gl` be used on a headless Linux machine?
+### How can `gl-bun` be used on a headless Linux machine?
 
 If you are running your own minimal Linux server, such as the one one would want to use on Amazon AWS or equivalent, it will likely not provide an X11 nor an OpenGL environment. To setup such an environment you can use those two packages:
 
@@ -203,7 +213,7 @@ Interacting with `Xvfb` requires you to start it on the background and to execut
 
     xvfb-run -s "-ac -screen 0 1280x1024x24" <node program>
 
-### Does headless-gl work in a browser?
+### Does gl-bun work in a browser?
 
 Yes, with [browserify](http://browserify.org/). The `STACKGL_destroy_context` and `STACKGL_resize_drawingbuffer` extensions are emulated as well.
 
@@ -235,17 +245,17 @@ Only the following for now:
 
 Despite the name, [node-webgl](https://github.com/mikeseven/node-webgl) doesn't actually implement WebGL - rather it gives you "WebGL"-flavored bindings to whatever OpenGL driver is configured on your system. If you are starting from an existing WebGL application or library, this means you'll have to do a bunch of work rewriting your WebGL code and shaders to deal with all the idiosyncrasies and bugs present on whatever platforms you try to run on. The upside though is that `node-webgl` exposes a lot of non-WebGL stuff that might be useful for games like window creation, mouse and keyboard input, requestAnimationFrame emulation, and some native OpenGL features.
 
-`headless-gl` on the other hand just implements WebGL. It is built on top of [ANGLE](https://bugs.chromium.org/p/angleproject/issues/list) and passes the full Khronos ARB conformance suite, which means it works exactly the same on all supported systems. This makes it a great choice for running on a server or in a command line tool. You can use it to run tests, generate images or perform GPGPU computations using shaders.
+`gl-bun` on the other hand just implements WebGL. It is built on top of [ANGLE](https://bugs.chromium.org/p/angleproject/issues/list) and passes the full Khronos ARB conformance suite, which means it works exactly the same on all supported systems. This makes it a great choice for running on a server or in a command line tool. You can use it to run tests, generate images or perform GPGPU computations using shaders.
 
 ### Why use this thing instead of [electron](http://electron.atom.io/)?
 
-Electron is fantastic if you are writing a desktop application or if you need a full DOM implementation. On the other hand, because it is a larger dependency electron is more difficult to set up and configure in a server-side/CI environment. `headless-gl` is more modular in the sense that it just implements WebGL and nothing else. As a result creating a `headless-gl` context takes just a few milliseconds on most systems, while spawning a full electron instance can take upwards of 15-30 seconds. If you are using WebGL in a command line interface or need to execute WebGL in a service, `headless-gl` might be a more efficient and simpler choice.
+Electron is fantastic if you are writing a desktop application or if you need a full DOM implementation. On the other hand, because it is a larger dependency electron is more difficult to set up and configure in a server-side/CI environment. `gl-bun` is more modular in the sense that it just implements WebGL and nothing else. As a result creating a `gl-bun` context takes just a few milliseconds on most systems, while spawning a full electron instance can take upwards of 15-30 seconds. If you are using WebGL in a command line interface or need to execute WebGL in a service, `gl-bun` might be a more efficient and simpler choice.
 
-### How should I set up a development environment for headless-gl?
+### How should I set up a development environment for gl-bun?
 
 After you have your [system dependencies installed](#system-dependencies), do the following:
 
-1. Clone this repo: `git clone git@github.com:stackgl/headless-gl.git`
+1. Clone this repo: `git clone git@github.com:eastlondoner/headless-gl.git`
 1. Switch to the headless gl directory: `cd headless-gl`
 1. Install npm dependencies: `npm install`
 1. Run node-gyp to generate build scripts: `npm run rebuild`
