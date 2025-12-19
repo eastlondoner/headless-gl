@@ -1,6 +1,13 @@
-const NativeWebGL = require('bindings')('webgl')
+// Direct .node loading without bindings package
+// This is required for Bun bundler compatibility - the bindings package
+// doesn't work in Bun compiled executables
+
+const NativeWebGL = require('../../build/Release/webgl_napi.node')
 const { WebGLRenderingContext: NativeWebGLRenderingContext } = NativeWebGL
-process.on('exit', NativeWebGL.cleanup)
+
+if (typeof NativeWebGL.cleanup === 'function') {
+  process.on('exit', NativeWebGL.cleanup)
+}
 
 const gl = NativeWebGLRenderingContext.prototype
 

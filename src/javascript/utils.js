@@ -8,7 +8,13 @@ function bindPublics (props, wrapper, privateInstance, privateMethods) {
     const value = privateInstance[prop]
     if (typeof value === 'function') {
       if (privateMethods.indexOf(prop) === -1) {
-        wrapper[prop] = value.bind(privateInstance)
+        // Use Object.defineProperty to handle readonly properties in Bun bundled apps
+        Object.defineProperty(wrapper, prop, {
+          value: value.bind(privateInstance),
+          writable: true,
+          enumerable: true,
+          configurable: true
+        })
       }
     } else {
       if (prop[0] === '_' ||
@@ -16,7 +22,13 @@ function bindPublics (props, wrapper, privateInstance, privateMethods) {
         prop[0] === '1') {
         continue
       }
-      wrapper[prop] = value
+      // Use Object.defineProperty to handle readonly properties in Bun bundled apps
+      Object.defineProperty(wrapper, prop, {
+        value: value,
+        writable: true,
+        enumerable: true,
+        configurable: true
+      })
     }
   }
 }
