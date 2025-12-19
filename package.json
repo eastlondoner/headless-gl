@@ -17,7 +17,6 @@
     "install": "prebuild-install || node-gyp rebuild"
   },
   "dependencies": {
-    "bindings": "^1.5.0",
     "bit-twiddle": "^1.0.2",
     "glsl-tokenizer": "^2.1.5",
     "nan": "^2.24.0",
