@@ -38,6 +38,15 @@ function createContext (width, height, options) {
   const WebGLContext = contextAttributes.createWebGL2Context ? WebGL2RenderingContext : WebGLRenderingContext
   let ctx
   try {
+    console.error('[gl-bun] Creating WebGLContext with:', {
+      width: 1, height: 1,
+      alpha: contextAttributes.alpha,
+      depth: contextAttributes.depth,
+      stencil: contextAttributes.stencil,
+      antialias: contextAttributes.antialias,
+      premultipliedAlpha: contextAttributes.premultipliedAlpha,
+      preserveDrawingBuffer: contextAttributes.preserveDrawingBuffer,
+    })
     ctx = new WebGLContext(
       1,
       1,
@@ -50,7 +59,10 @@ function createContext (width, height, options) {
       contextAttributes.preferLowPowerToHighPerformance,
       contextAttributes.failIfMajorPerformanceCaveat,
       contextAttributes.createWebGL2Context)
-  } catch (e) {}
+    console.error('[gl-bun] Context created:', !!ctx)
+  } catch (e) {
+    console.error('[gl-bun] WebGLContext creation failed:', e)
+  }
   if (!ctx) {
     return null
   }
